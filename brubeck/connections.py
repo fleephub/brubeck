@@ -1,12 +1,10 @@
 import ujson as json
 from uuid import uuid4
 import cgi
-import re
 import logging
-import Cookie
 
-from request import to_bytes, to_unicode, parse_netstring, Request
-from request_handling import http_response, coro_spawn
+from request import to_bytes, Request
+from request_handling import coro_spawn
 
 
 ###
@@ -21,29 +19,13 @@ class Connection(object):
     response is necessary.
     """
 
-    def __init__(self, incoming=None, outgoing=None):
-        """The base `__init__()` function configures a unique ID and assigns
-        the incoming and outgoing mechanisms to a name.
-
-        `in_sock` and `out_sock` feel like misnomers at this time but they are
-        preserved for a transition period.
+    def process_message(self, application, message):
+        """This coroutine looks at the message, determines which handler will
+        be used to process it, and then begins processing.
+        
+        The application is responsible for handling misconfigured routes.
         """
-        self.sender_id = uuid4().hex
-        self.in_sock = incoming
-        self.out_sock = outgoing
-
-    def _unsupported(self, name):
-        """Simple function that raises an exception.
-        """
-        error_msg = 'Subclass of Connection has not implemented `%s()`' % name
-        raise NotImplementedError(error_msg)
-
-
-    def recv(self):
-        """Receives a raw mongrel2.handler.Request object that you
-        can then work with.
-        """
-        self._unsupported('recv')
+        pass
 
     def _recv_forever_ever(self, fun_forever):
         """Calls a handler function that runs forever. The handler can be
@@ -54,37 +36,6 @@ class Connection(object):
         except KeyboardInterrupt, ki:
             # Put a newline after ^C
             print '\nBrubeck going down...'
-
-    def send(self, uuid, conn_id, msg):
-        """Function for sending a single message.
-        """
-        self._unsupported('send')
- 
-    def reply(self, req, msg):
-        """Does a reply based on the given Request object and message.
-        """
-        self.send(req.sender, req.conn_id, msg)
-
-    def reply_bulk(self, uuid, idents, data):
-        """This lets you send a single message to many currently
-        connected clients.  There's a MAX_IDENTS that you should
-        not exceed, so chunk your targets as needed.  Each target
-        will receive the message once by Mongrel2, but you don't have
-        to loop which cuts down on reply volume.
-        """
-        self._unsupported('reply_bulk')
-        self.send(uuid, ' '.join(idents), data)
-
-    def close(self):
-        """Close the connection.
-        """
-        self._unsupported('close')
-
-    def close_bulk(self, uuid, idents):
-        """Same as close but does it to a whole bunch of idents at a time.
-        """
-        self._unsupported('close_bulk')
-        self.reply_bulk(uuid, idents, "")
 
 
 ###
@@ -141,17 +92,17 @@ class Mongrel2Connection(Connection):
         """
         zmq = load_zmq()
         ctx = load_zmq_ctx()
-        
-        in_sock = ctx.socket(zmq.PULL)
-        out_sock = ctx.socket(zmq.PUB)
 
-        super(Mongrel2Connection, self).__init__(in_sock, out_sock)
+        self.sender_id = uuid4().hex
+        self.in_sock = ctx.socket(zmq.PULL)
+        self.out_sock = ctx.socket(zmq.PUB)
+
         self.in_addr = pull_addr
         self.out_addr = pub_addr
 
-        in_sock.connect(pull_addr)
-        out_sock.setsockopt(zmq.IDENTITY, self.sender_id)
-        out_sock.connect(pub_addr)
+        self.in_sock.connect(pull_addr)
+        self.out_sock.setsockopt(zmq.IDENTITY, self.sender_id)
+        self.out_sock.connect(pub_addr)
 
     def process_message(self, application, message):
         """This coroutine looks at the message, determines which handler will
@@ -161,21 +112,10 @@ class Mongrel2Connection(Connection):
         """
         request = Request.parse_msg(message)
         if request.is_disconnect():
-            return  # Ignore disconnect msgs. Dont have areason to do otherwise
+            return  # Ignore disconnect msgs. Dont have a reason to do otherwise
         handler = application.route_message(request)
         result = handler()
-
-        http_content = http_response(result['body'], result['status_code'],
-                                     result['status_msg'], result['headers'])
-
-        application.msg_conn.reply(request, http_content)
-
-    def recv(self):
-        """Receives a raw mongrel2.handler.Request object that you from the
-        zeromq socket and return whatever is found.
-        """
-        zmq_msg = self.in_sock.recv()
-        return zmq_msg
+        self.reply(request, result)
 
     def recv_forever_ever(self, application):
         """Defines a function that will run the primary connection Brubeck uses
@@ -184,7 +124,7 @@ class Mongrel2Connection(Connection):
         """
         def fun_forever():
             while True:
-                request = self.recv()
+                request = self.in_sock.recv()
                 coro_spawn(self.process_message, application, request)
         self._recv_forever_ever(fun_forever)
 
@@ -212,7 +152,7 @@ class Mongrel2Connection(Connection):
     def close(self):
         """Tells mongrel2 to explicitly close the HTTP connection.
         """
-        pass
+        self.reply(req.sender, "")
 
     def close_bulk(self, uuid, idents):
         """Same as close but does it to a whole bunch of idents at a time.
@@ -229,7 +169,6 @@ class WSGIConnection(Connection):
     """
 
     def __init__(self, port=6767):
-        super(WSGIConnection, self).__init__()
         self.port = port
 
     def process_message(self, application, environ, callback):

@@ -53,17 +53,16 @@ import hmac
 import cPickle as pickle
 from itertools import chain
 import os, sys
-from dictshield.base import ShieldException
-from request import Request, to_bytes, to_unicode
-
+from request import Request, to_bytes
 import ujson as json
 
 ###
 ### Common helpers
 ###
 
-HTTP_METHODS = ['get', 'post', 'put', 'delete',
-                'head', 'options', 'trace', 'connect']
+METHODS = ['get', 'post', 'put', 'delete',
+           'head', 'options', 'trace', 'connect', 
+           'websocket', 'websocket_handshake']
 
 HTTP_FORMAT = "HTTP/1.1 %(code)s %(status)s\r\n%(headers)s\r\n\r\n%(body)s"
 
@@ -75,16 +74,6 @@ class FourOhFourException(Exception):
 ###
 ### Result Processing
 ###
-
-def render(body, status_code, status_msg, headers):
-    payload = {
-        'body': body,
-        'status_code': status_code,
-        'status_msg': status_msg,
-        'headers': headers,
-    }
-    return payload
-
 
 def http_response(body, code, status, headers):
     """Renders arguments into an HTTP response.
@@ -221,7 +210,7 @@ class MessageHandler(object):
         """List all the HTTP methods you have defined.
         """
         supported_methods = []
-        for mef in HTTP_METHODS:
+        for mef in METHODS:
             if callable(getattr(self, mef, False)):
                 supported_methods.append(mef)
         return supported_methods
@@ -318,7 +307,7 @@ class MessageHandler(object):
                 mef = self.message.method.lower()  # M-E-T-H-O-D man!
 
                 # Find function mapped to method on self
-                if mef in HTTP_METHODS:
+                if mef in METHODS:
                     fun = getattr(self, mef, self.unsupported)
                 else:
                     fun = self.unsupported
@@ -548,12 +537,11 @@ class WebMessageHandler(MessageHandler):
 
         self.convert_cookies()
 
-        response = render(self.body, status_code, self.status_msg, self.headers)
-
         logging.info('%s %s %s (%s)' % (status_code, self.message.method,
                                         self.message.path,
                                         self.message.remote_addr))
-        return response
+        
+        return http_response(self.body, status_code, self.status_msg, self.headers)
 
 
 class JSONMessageHandler(WebMessageHandler):
@@ -576,13 +564,11 @@ class JSONMessageHandler(WebMessageHandler):
         else:
             body = json.dumps(self._payload)
 
-        response = render(body, self.status_code, self.status_msg,
-                          self.headers)
-
         logging.info('%s %s %s (%s)' % (self.status_code, self.message.method,
                                         self.message.path,
                                         self.message.remote_addr))
-        return response
+        
+        return http_response(body, self.status_code, self.status_msg, self.headers)
 
 
 class JsonSchemaMessageHandler(WebMessageHandler):
@@ -603,10 +589,7 @@ class JsonSchemaMessageHandler(WebMessageHandler):
         self.convert_cookies()
         self.headers['Content-Type'] = "application/schema+json"
 
-        response = render(self.body, status_code, self.status_msg,
-                          self.headers)
-
-        return response
+        return http_response(self.body, status_code, self.status_msg, self.headers)
 
 ###
 ### Application logic
