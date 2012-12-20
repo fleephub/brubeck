@@ -22,7 +22,7 @@ class Connection(object):
     def process_message(self, application, message):
         """This coroutine looks at the message, determines which handler will
         be used to process it, and then begins processing.
-        
+
         The application is responsible for handling misconfigured routes.
         """
         pass
@@ -67,7 +67,7 @@ def load_zmq_ctx():
         zmq = load_zmq()
         zmq_ctx = zmq.Context()
         load_zmq_ctx._zmq_ctx = zmq_ctx
-        
+
     return load_zmq_ctx._zmq_ctx
 
 
@@ -107,7 +107,7 @@ class Mongrel2Connection(Connection):
     def process_message(self, application, message):
         """This coroutine looks at the message, determines which handler will
         be used to process it, and then begins processing.
-        
+
         The application is responsible for handling misconfigured routes.
         """
         request = Request.parse_msg(message)
@@ -115,7 +115,9 @@ class Mongrel2Connection(Connection):
             return  # Ignore disconnect msgs. Dont have a reason to do otherwise
         handler = application.route_message(request)
         result = handler()
-        self.reply(request, result)
+        # in case of long poll we do not want to send reply
+        if result is not None:
+            self.reply(request, result)
 
     def recv_forever_ever(self, application):
         """Defines a function that will run the primary connection Brubeck uses
@@ -161,7 +163,7 @@ class Mongrel2Connection(Connection):
 
 
 ###
-### WSGI 
+### WSGI
 ###
 
 class WSGIConnection(Connection):
@@ -175,7 +177,7 @@ class WSGIConnection(Connection):
         request = Request.parse_wsgi_request(environ)
         handler = application.route_message(request)
         result = handler()
-        
+
         wsgi_status = ' '.join([str(result['status_code']), result['status_msg']])
         headers = [(k, v) for k,v in result['headers'].items()]
         callback(str(wsgi_status), headers)
@@ -193,15 +195,15 @@ class WSGIConnection(Connection):
 
             def proc_msg(environ, callback):
                 return self.process_message(application, environ, callback)
-            
+
             if CORO_LIBRARY == 'gevent':
                 from gevent import wsgi
                 server = wsgi.WSGIServer(('', self.port), proc_msg)
                 server.serve_forever()
-                
+
             elif CORO_LIBRARY == 'eventlet':
                 import eventlet.wsgi
                 server = eventlet.wsgi.server(eventlet.listen(('', self.port)),
                                               proc_msg)
-                
+
         self._recv_forever_ever(fun_forever)

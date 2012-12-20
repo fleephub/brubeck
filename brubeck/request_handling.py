@@ -61,7 +61,7 @@ import ujson as json
 ###
 
 METHODS = ['get', 'post', 'put', 'delete',
-           'head', 'options', 'trace', 'connect', 
+           'head', 'options', 'trace', 'connect',
            'websocket', 'websocket_handshake']
 
 HTTP_FORMAT = "HTTP/1.1 %(code)s %(status)s\r\n%(headers)s\r\n\r\n%(body)s"
@@ -325,10 +325,6 @@ class MessageHandler(object):
                         rendered = fun(**kwargs)
                     else:
                         rendered = fun(*self._url_args)
-
-                    if rendered is None:
-                        logging.debug('Handler had no return value: %s' % fun)
-                        return ''
                 except Exception, e:
                     logging.error(e, exc_info=True)
                     rendered = self.error(e)
@@ -540,7 +536,7 @@ class WebMessageHandler(MessageHandler):
         logging.info('%s %s %s (%s)' % (status_code, self.message.method,
                                         self.message.path,
                                         self.message.remote_addr))
-        
+
         return http_response(self.body, status_code, self.status_msg, self.headers)
 
 
@@ -567,7 +563,7 @@ class JSONMessageHandler(WebMessageHandler):
         logging.info('%s %s %s (%s)' % (self.status_code, self.message.method,
                                         self.message.path,
                                         self.message.remote_addr))
-        
+
         return http_response(body, self.status_code, self.status_msg, self.headers)
 
 
